@@ -1,0 +1,46 @@
+
+parameters:
+  - name: RepoName
+    type: string
+    default: ''
+
+steps:
+    - script: |
+        #!/bin/bash
+        source $(System.DefaultWorkingDirectory)/utils.sh
+
+        REPO_NAME="${{ parameters.RepoName }}"
+
+        # Get Project ID
+        echo "Getting project ID for $PROJECT_NAME..."
+        project_url="$BASE_URL/_apis/projects/$PROJECT_NAME?$API_VERSION"
+        echo "Calling REST API: $project_url"
+        project_response=$(make_request "$(TEMPLATE_PAT)" "$project_url")
+        project_id=$(echo "$project_response" | jq -r '.id')
+        echo "Project ID: $project_id"
+        if [ "$project_id" = "null" ]; then
+            echo "Error: Failed to get project ID"
+            exit 1
+        fi
+
+        # Get Repository ID and default branch
+        echo "Getting repository information for $REPO_NAME..."
+        repo_url="$BASE_URL/$project_id/_apis/git/repositories/$REPO_NAME?$API_VERSION"
+        repo_response=$(make_request "$(TEMPLATE_PAT)" "$repo_url")
+        repo_id=$(echo "$repo_response" | jq -r '.id')
+        default_branch=$(echo "$repo_response" | jq -r '.defaultBranch' | sed 's/refs\/heads\///')
+        if [ "$repo_id" = "null" ] || [ "$default_branch" = "null" ]; then
+            echo "Error: Failed to get repository information"
+            exit 1
+        fi
+        
+        echo "Repository ID: $repo_id"
+        echo "Default branch: $default_branch"
+
+        # Set pipeline variable
+        echo "##vso[task.setvariable variable=DefaultBranch;isOutput=true]$default_branch"
+        echo "##vso[task.setvariable variable=RepoId;isOutput=true]$repo_id"
+        echo "##vso[task.setvariable variable=ProjectId;isOutput=true]$project_id"
+      name: GetDefaultBranchName
+      displayName: 'Get default branch name'
+        

@@ -1,0 +1,96 @@
+
+
+steps:
+  - script: |
+        source $(System.DefaultWorkingDirectory)/utils.sh
+        echo "Checking permissions for branch: $(DefaultBranch)"
+
+        permission_check_status="Success"
+        deny_value=$(get_deny_value)
+        hex_value_branch=$(convert_to_hex $(DefaultBranch))
+        branch_token="repoV2/$(ProjectId)/$(RepoId)/refs/heads/$hex_value_branch"
+        echo "Deny value: $deny_value"
+        echo "Branch token: $branch_token"
+
+        # Function to get Project Collection Valid Users group descriptor
+        get_project_collection_valid_users_descriptor() {
+            
+            local groups_url="https://vssps.dev.azure.com/$ORG_NAME/_apis/identities?searchFilter=General&filterValue=Project%20Collection%20Valid%20Users&queryMembership=None&api-version=7.2-preview.1"
+            local groups_response=$(make_request "$(TEMPLATE_PAT)" "$groups_url")
+            local descriptor=$(echo "$groups_response" | jq -r '.value[] | select(.providerDisplayName == "[libingchen716]\\Project Collection Valid Users") | .descriptor')
+            if [ -z "$descriptor" ]; then
+                echo "Error: Failed to get Project Collection Valid Users group descriptor"
+                exit 1
+            fi
+            
+            echo "$descriptor"
+        }
+
+        # Function to check permission from an entry
+        check_permission() {
+            local entry="$1"
+            local bit_position="$2"
+            local level="$3"  # "branch", "repo", or "project"
+            local descriptor="$4"
+            
+            if [ -z "$entry" ] || [ "$entry" = "null" ]; then
+                echo "No explicit permission entry found at $level level."
+
+            else
+              if [ -z "$(echo "$entry" | jq -r '.extendedInfo')" ]; then
+                echo "No explicit effective permission found at $level level."
+                permission_check_status="Failed"
+
+              else
+                deny=$(echo "$entry" | jq -r '.extendedInfo.effectiveDeny')
+                entry_descriptor=$(echo "$entry" | jq -r '.descriptor')
+                echo "For $entry_descriptor"
+                echo "Deny permissions at $level level: $deny"
+
+                # Check if permission is denied
+                if (( (deny & bit_position) == bit_position )); then
+                  echo "Required permissions are denied in entry at $level level."
+                  # permission_status[$permission]="Success"
+                else
+                  echo "Required permissions are NOT denied in entry at $level level."
+                  permission_check_status="Failed"
+                fi
+              fi
+            fi
+        }
+
+        # Query effective ACL for a branch + group
+        check_branch_effective_permission_at_level() {
+          local level="$1"
+          local token="$2"
+          local bit_position="$3"
+          local descriptor="$4"
+
+          permission_url="$BASE_URL/_apis/accesscontrollists/$SECURITY_NAMESPACE_ID?token=$token&descriptor=$descriptor&includeExtendedInfo=true&$API_VERSION"
+          echo "Permission URL: $permission_url"
+
+          permissions_response=$(make_request "$(TEMPLATE_PAT)" "$permission_url")
+          echo "$permissions_response" | jq .
+
+          local count=$(echo "$permissions_response" | jq -r '.count')
+          if [ "$count" -eq 0 ]; then
+              echo "No explicit permissions set at $level level."
+          else
+              aces=$(echo "$permissions_response" | jq -c '.value[0].acesDictionary[]')
+              for ace_entry in $aces; do
+                  check_permission "$ace_entry" "$bit_position" "$level" "$descriptor"
+              done
+          fi
+        }
+
+        # Branch level
+        descriptor=$(get_project_collection_valid_users_descriptor)
+        check_branch_effective_permission_at_level "branch" "$branch_token" "$deny_value" "$descriptor"
+        echo "Permission check status: $permission_check_status"
+
+        # Set pipeline variable
+        echo "##vso[task.setvariable variable=PCVU_DESCRIPTOR;isOutput=true]$descriptor"
+        echo "##vso[task.setvariable variable=PermissionCheckStatus;isOutput=true]$permission_check_status"
+
+    name: CheckBranchPermissions
+    displayName: 'Check Branch Permissions'    

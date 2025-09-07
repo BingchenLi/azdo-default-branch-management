@@ -1,0 +1,57 @@
+
+
+steps:
+  - script: |
+        #!/bin/bash
+        echo "Setting branch review policies for branch: $(DefaultBranch)"
+        echo "Policy ID: $(PolicyId)"
+        source $(System.DefaultWorkingDirectory)/utils.sh
+
+        set_branch_review_policy_settings() {
+          local branch="$1"
+          local repo_id="$2"
+          local policy_id=${3:-}
+          local ref_name="refs/heads/$branch"
+          local policy_url_create="$BASE_URL/$PROJECT_NAME/_apis/policy/configurations?$API_VERSION"
+          local policy_url_update="$BASE_URL/$PROJECT_NAME/_apis/policy/configurations/$policy_id?$API_VERSION"
+
+          echo "policy_id: $policy_id"
+
+          PAYLOAD=$(jq -n \
+            --arg ref_name "$ref_name" \
+            --arg repo_id "$repo_id" \
+            --argjson approvers 2 \
+            '{
+              isEnabled: true,
+              isBlocking: true,
+              type: { id: "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd" },
+              settings: {
+                "minimumApproverCount": $approvers,
+                "resetOnSourcePush": true,
+                "resetRejectionsOnSourcePush": false,
+                scope: [
+                  {
+                    refName: $ref_name,
+                    matchKind: "exact",
+                    repositoryId: $repo_id
+                  }
+                ]
+              }
+            }')
+
+          if [[ -z "$policy_id" ]]; then
+            echo "No policy ID provided. Creating a new policy..."
+            policy_response=$(make_request "$(TEMPLATE_PAT)" "$policy_url_create" "POST" "$PAYLOAD")
+            echo "$policy_response"
+          else
+            echo "Updating existing policy with ID: $policy_id"
+            policy_response=$(make_request "$(TEMPLATE_PAT)" "$policy_url_update" "PUT" "$PAYLOAD")
+            echo "$policy_response" | jq .
+          fi
+        }
+
+        response=$(set_branch_review_policy_settings "$(DefaultBranch)" "$(RepoId)" "$(PolicyId)")
+        echo "$response"
+
+    name: SetBranchPolicy
+    displayName: 'Set Branch Policy'    

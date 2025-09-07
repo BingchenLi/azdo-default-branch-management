@@ -1,0 +1,105 @@
+
+parameters:
+  - name: RepoName
+    type: string
+    default: ''
+  - name: failOnError
+    type: boolean
+    default: false
+
+stages:
+  - stage: DefaultBranchManagement
+    displayName: 'Default Branch Management'
+    jobs:
+      - job: GetDefaultBranchInfo
+        displayName: 'Get Default Branch Info'
+        steps:
+          - template: get-default-branch.yaml
+            parameters:
+              RepoName: ${{ parameters.RepoName }}
+      
+      - job: CheckBranchPermission
+        displayName: 'Check Branch Permission'
+        dependsOn: GetDefaultBranchInfo
+        variables:
+          ProjectId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.ProjectId'] ]
+          RepoId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.RepoId'] ]
+          DefaultBranch: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.DefaultBranch'] ]
+          RepoName: ${{ parameters.RepoName }}
+        steps:
+          - template: check-branch-permission.yaml
+            
+      - job: CheckBranchPolicy
+        displayName: 'Check Branch Policy'
+        dependsOn: GetDefaultBranchInfo
+        variables:
+          RepoId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.RepoId'] ]
+          DefaultBranch: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.DefaultBranch'] ]
+          RepoName: ${{ parameters.RepoName }}
+        steps:
+          - template: check-branch-policy.yaml
+
+      - job: SetBranchPolicy
+        displayName: 'Set Branch Policy'
+        dependsOn: 
+          - GetDefaultBranchInfo
+          - CheckBranchPolicy
+        variables:
+          RepoId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.RepoId'] ]
+          DefaultBranch: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.DefaultBranch'] ]
+          PolicyId: $[ dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.PolicyId'] ]
+        condition: |
+          or(
+            eq(dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.minimumApproverCount'], 'Failed'),
+            eq(dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.resetOnSourcePush'], 'Failed'),
+            eq(dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.resetRejectionsOnSourcePush'], 'Failed')
+          )
+        steps:
+          - template: set-branch-policy.yaml
+      
+      - job: SetBranchPermission
+        displayName: 'Set Branch Permission'
+        dependsOn: 
+          - GetDefaultBranchInfo
+          - CheckBranchPermission
+          - SetBranchPolicy
+        variables:
+          ProjectId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.ProjectId'] ]
+          RepoId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.RepoId'] ]
+          DefaultBranch: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.DefaultBranch'] ]
+          Descriptor: $[ dependencies.CheckBranchPermission.outputs['CheckBranchPermissions.PCVU_DESCRIPTOR'] ]
+          RepoName: ${{ parameters.RepoName }}
+        condition: |
+          eq(dependencies.CheckBranchPermission.outputs['CheckBranchPermissions.PermissionCheckStatus'], 'Failed')
+        steps:
+          - template: set-branch-permission.yaml
+
+      - job: GetVariables
+        dependsOn: 
+          - GetDefaultBranchInfo
+          - CheckBranchPermission
+          - CheckBranchPolicy
+        variables:
+          ProjectId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.ProjectId'] ]
+          RepoId: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.RepoId'] ]
+          Descriptor: $[ dependencies.CheckBranchPermission.outputs['CheckBranchPermissions.PCVU_DESCRIPTOR'] ]
+          DefaultBranch: $[ dependencies.GetDefaultBranchInfo.outputs['GetDefaultBranchName.DefaultBranch'] ]
+          PermissionCheckStatus: $[ dependencies.CheckBranchPermission.outputs['CheckBranchPermissions.PermissionCheckStatus'] ]
+          PolicyId: $[ dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.PolicyId'] ]
+          minimumApproverCount: $[ dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.minimumApproverCount'] ]
+          resetOnSourcePush: $[ dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.resetOnSourcePush'] ]
+          resetRejectionsOnSourcePush: $[ dependencies.CheckBranchPolicy.outputs['CheckBranchPolicies.resetRejectionsOnSourcePush'] ]
+        steps:
+          - script: |
+              echo "$(DefaultBranch)"
+              echo "$(RepoId)"
+              echo "$(ProjectId)"
+              echo "$(Descriptor)"
+              echo "$(PermissionCheckStatus)"
+              echo "$(PolicyId)"
+              echo "$(minimumApproverCount)"
+              echo "$(resetOnSourcePush)"
+              echo "$(resetRejectionsOnSourcePush)"
+            name: setvarStep
+      
+            

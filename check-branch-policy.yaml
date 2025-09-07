@@ -1,0 +1,79 @@
+
+steps:
+  - script: |
+        #!/bin/bash
+        echo "Checking branch review policies for branch: $(DefaultBranch)"
+        source $(System.DefaultWorkingDirectory)/utils.sh
+
+        echo "RepoId: $(RepoId)"
+
+        declare -A expected_branch_review_policy_setting=(
+          ["minimumApproverCount"]=2
+          ["resetOnSourcePush"]="true"
+          ["resetRejectionsOnSourcePush"]="false"
+        )
+
+        declare -A branch_review_policy_setting_status=(
+          ["minimumApproverCount"]="Failed"
+          ["resetOnSourcePush"]="Failed"
+          ["resetRejectionsOnSourcePush"]="Failed"
+        )
+
+        policy_id=""
+
+        check_branch_review_policy_settings() {
+          local branch="$1"
+
+          local policy_url="$BASE_URL/$PROJECT_NAME/_apis/policy/configurations?repositoryId=$(RepoId)&refName=$branch&$API_VERSION"
+          echo "Calling REST API: $policy_url"
+          local policy_response=$(make_request "$(TEMPLATE_PAT)" "$policy_url")
+          echo "$policy_response" | jq .
+
+          # Get the first policy if exists
+          policy=$(echo "$policy_response" | jq --arg repoId "$(RepoId)" --arg ref "$branch" '[.value[] | select(.settings.scope[] | select(.repositoryId == $repoId and .refName == $ref))][0]')
+          echo "current policy: $policy"
+
+          if [[ -z "$policy" ]]; then
+            echo "No existing reviewer policy found for $branch"
+            return 0
+          else
+             policy_id=$(echo "$policy" | jq -r '.id')
+          fi
+
+          if [[ $(echo "$policy" | jq -r '.settings.minimumApproverCount') -eq expected_branch_review_policy_setting["minimumApproverCount"] ]]; then
+              echo "Minimum approver count is correctly set to 2"
+              branch_review_policy_setting_status["minimumApproverCount"]="Success"
+          else
+              echo "Minimum approver count is NOT correctly set to 2"
+          fi
+
+          if [[ $(echo "$policy" | jq -r '.settings.resetOnSourcePush') == ${expected_branch_review_policy_setting["resetOnSourcePush"]} ]]; then
+              echo "Reset on source push is correctly set to true"
+              branch_review_policy_setting_status["resetOnSourcePush"]="Success"
+          else
+              echo "Reset on source push is NOT correctly set to true"
+          fi
+
+          if [[ $(echo "$policy" | jq -r '.settings.resetRejectionsOnSourcePush') == ${expected_branch_review_policy_setting["resetRejectionsOnSourcePush"]} ]]; then
+              echo "Reset rejections on source push is correctly set to false"
+              branch_review_policy_setting_status["resetRejectionsOnSourcePush"]="Success"
+          else
+              echo "Reset rejections on source push is NOT correctly set to false"
+          fi
+        }
+
+        check_branch_review_policy_settings "refs/heads/$(DefaultBranch)"
+        echo "policy_id: $policy_id"
+
+        echo "${branch_review_policy_setting_status["minimumApproverCount"]}"
+        echo "${branch_review_policy_setting_status["resetOnSourcePush"]}"
+        echo "${branch_review_policy_setting_status["resetRejectionsOnSourcePush"]}"
+
+        # Set pipeline variable
+        echo "##vso[task.setvariable variable=PolicyId;isOutput=true]$policy_id"
+        echo "##vso[task.setvariable variable=minimumApproverCount;isOutput=true]${branch_review_policy_setting_status["minimumApproverCount"]}"
+        echo "##vso[task.setvariable variable=resetOnSourcePush;isOutput=true]${branch_review_policy_setting_status["resetOnSourcePush"]}"
+        echo "##vso[task.setvariable variable=resetRejectionsOnSourcePush;isOutput=true]${branch_review_policy_setting_status["resetRejectionsOnSourcePush"]}"
+
+    name: CheckBranchPolicies
+    displayName: 'Check Branch Policies'    

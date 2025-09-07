@@ -1,0 +1,60 @@
+
+
+steps:
+  - script: |
+        #!/bin/bash
+        source $(System.DefaultWorkingDirectory)/utils.sh
+        echo "Setting branch permissions for branch: $(DefaultBranch)"
+        echo "Project Collection Valid Users Descriptor: $(Descriptor)"
+
+        hex_value_branch=$(convert_to_hex $(DefaultBranch))
+        branch_token="repoV2/$(ProjectId)/$(RepoId)/refs/heads/$hex_value_branch"
+        echo "Branch token: $branch_token"
+
+
+        set_permission(){
+          local token="$1"
+          local descriptor="$2"
+          deny_value=0
+
+          # Get the expected deny bit value for the permission
+          for key in "${!permission_bits[@]}"; do
+            deny_value=$((deny_value + permission_bits[$key]))
+          done
+          echo "Sum of permission_bits values: $deny_value"
+
+          new_acl=$(jq -n \
+          --arg token "$token" \
+          --arg descriptor "$descriptor" \
+          --argjson deny "$deny_value" \
+          '{
+            "token": $token,
+            "merge": true,
+            "accessControlEntries": [
+              {
+                "descriptor": $descriptor,
+                "allow": 0,
+                "deny": $deny,
+                "extendedInfo": {}
+              }
+            ]
+          }')
+
+          # Update ACLs
+          set_permission_url="$BASE_URL/_apis/accesscontrolentries/$SECURITY_NAMESPACE_ID?$API_VERSION"
+          response=$(make_request "$(TEMPLATE_PAT)" "$set_permission_url" "POST" "$new_acl")
+          echo "$response" | jq .
+          # Check if the update was successful
+          if echo "$response" | jq -e '.value' > /dev/null; then
+            echo "Successfully denied required permission for Project Collection Valid Users on branch $BRANCH."
+          else
+            echo "Failed to update ACLs. Response: $response"
+            exit 1
+          fi
+
+        }
+        
+        set_permission "$branch_token" "$(Descriptor)"
+
+    name: SetBranchPermission
+    displayName: 'Set Branch Permission'    
